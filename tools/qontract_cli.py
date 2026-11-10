@@ -7,7 +7,6 @@ import base64
 import json
 import logging
 import os
-import re
 import sys
 import tempfile
 import textwrap
@@ -161,13 +160,8 @@ from reconcile.utils.glitchtip.client import GlitchtipClient
 from reconcile.utils.gql import GqlApiSingleton
 from reconcile.utils.membershipsources.resolver import resolve_role_members
 from reconcile.utils.mr.labels import (
-    AVS,
-    HOLD,
-    PENDING_SELF_SERVICE_APPROVAL,
     SAAS_FILE_UPDATE,
     SELF_SERVICEABLE,
-    SHOW_SELF_SERVICEABLE_IN_REVIEW_QUEUE,
-    change_owner_label,
 )
 from reconcile.utils.oc import (
     OC_Map,
@@ -2327,9 +2321,11 @@ def app_interface_merge_queue(ctx: click.Context) -> None:
 @get.command()
 @click.pass_context
 def app_interface_review_queue(ctx: click.Context) -> None:
-    from reconcile.gitlab_housekeeping.labels import (
-        HOLD_LABELS,
-        compute_mr_label_status,
+    from reconcile.gitlab_housekeeping.labels import HOLD_LABELS
+    from reconcile.gitlab_housekeeping.review_queue import (
+        compute_review_queue_mr_eligibility,
+        compute_review_queue_pipeline_eligibility,
+        compute_review_queue_reviewer_eligibility,
     )
 
     vault_settings = get_app_interface_vault_settings()
@@ -2357,84 +2353,51 @@ def app_interface_review_queue(ctx: click.Context) -> None:
 
         queue_data = []
         for mr in merge_requests:
-            if mr.draft:
-                continue
-            if len(mr.commits()) == 0:
-                continue
-            if mr.merge_status in {
-                MRStatus.CANNOT_BE_MERGED,
-                MRStatus.CANNOT_BE_MERGED_RECHECK,
-            }:
-                continue
-
             labels = mr.attributes.get("labels") or []
-            status = compute_mr_label_status(labels)
-            good_to_merge = status.is_good_to_merge
-            has_error_label = status.has_error
-            if good_to_merge and not has_error_label:
-                continue
-            if "stale" in labels:
-                continue
-            if SAAS_FILE_UPDATE in labels and not has_error_label:
-                continue
-            if HOLD in labels:
-                continue
-            if PENDING_SELF_SERVICE_APPROVAL in labels and not has_error_label:
-                continue
-            if (
-                SELF_SERVICEABLE in labels
-                and SHOW_SELF_SERVICEABLE_IN_REVIEW_QUEUE not in labels
-                # SHOW_SELF_SERVICEABLE_IN_REVIEW_QUEUE sourced from a role's
-                # change-owners-labels config is bundle-derived, so change-owners
-                # correctly wraps it with the "change-owner/" prefix (see
-                # rebuild_change_owner_labels()) - unlike the unprefixed form set
-                # directly by github-username-sync/ldap-users-api.
-                and change_owner_label(SHOW_SELF_SERVICEABLE_IN_REVIEW_QUEUE)
-                not in labels
-                and AVS not in labels
-                and not has_error_label
-            ):
+            mr_eligibility, overridden_by_error = compute_review_queue_mr_eligibility(
+                labels=labels,
+                is_draft=mr.draft,
+                has_commits=len(mr.commits()) != 0,
+                is_unmergeable=mr.merge_status
+                in {MRStatus.CANNOT_BE_MERGED, MRStatus.CANNOT_BE_MERGED_RECHECK},
+            )
+            if not mr_eligibility.needs_review:
                 continue
 
             pipelines = gl.get_merge_request_pipelines(mr)
             pipelines = [p for p in pipelines if p.status != PipelineStatus.SKIPPED]
-            if not pipelines:
-                continue
-            running_pipelines = [
-                p for p in pipelines if p.status == PipelineStatus.RUNNING
-            ]
-            if running_pipelines:
-                continue
-            last_pipeline_result = pipelines[0].status
-            if last_pipeline_result != PipelineStatus.SUCCESS and not (
-                good_to_merge and has_error_label
-            ):
+            pipeline_eligibility = compute_review_queue_pipeline_eligibility(
+                has_runnable_pipelines=bool(pipelines),
+                has_running_pipeline=any(
+                    p.status == PipelineStatus.RUNNING for p in pipelines
+                ),
+                latest_pipeline_succeeded=bool(pipelines)
+                and pipelines[0].status == PipelineStatus.SUCCESS,
+                overridden_by_error=overridden_by_error,
+            )
+            if not pipeline_eligibility.needs_review:
                 continue
 
             author = mr.author["username"]
             app_sre_team_members = {u.username for u in gl.get_app_sre_group_users()}
-            if author in app_sre_team_members and not (
-                good_to_merge and has_error_label
-            ):
-                continue
-
             is_assigned_by_app_sre = gl.is_assigned_by_team(mr, app_sre_team_members)
-            if is_assigned_by_app_sre:
-                continue
-
             is_last_action_by_app_sre = gl.is_last_action_by_team(
                 mr, app_sre_team_members, HOLD_LABELS
             )
-
-            if is_last_action_by_app_sre and not (good_to_merge and has_error_label):
+            last_comment_body = None
+            if is_last_action_by_app_sre and not overridden_by_error:
                 last_comment = gl.last_comment(mr, exclude_bot=True)
-                # skip only if the last comment isn't a trigger phrase
-                if (
-                    last_comment
-                    and trigger_phrases_regex
-                    and not re.fullmatch(trigger_phrases_regex, last_comment.body)
-                ):
-                    continue
+                last_comment_body = last_comment.body if last_comment else None
+            reviewer_eligibility = compute_review_queue_reviewer_eligibility(
+                author_is_app_sre=author in app_sre_team_members,
+                is_assigned_by_app_sre=is_assigned_by_app_sre,
+                is_last_action_by_app_sre=is_last_action_by_app_sre,
+                last_comment_body=last_comment_body,
+                trigger_phrases_regex=trigger_phrases_regex,
+                overridden_by_error=overridden_by_error,
+            )
+            if not reviewer_eligibility.needs_review:
+                continue
 
             item = {
                 "id": f"[{mr.iid}]({mr.web_url})",
