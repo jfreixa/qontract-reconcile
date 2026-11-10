@@ -744,7 +744,7 @@ def _process_omm_member(
             "eject-error-label",
             gl.project.name,
             mr.iid,
-            sorted(status.error_labels),
+            status.error_labels,
         ])
         if not dry_run:
             gl.remove_label(mr, OMM_PENDING)
@@ -760,7 +760,7 @@ def _process_omm_member(
             "eject-hold-label",
             gl.project.name,
             mr.iid,
-            sorted(status.hold_labels),
+            status.hold_labels,
         ])
         if not dry_run:
             gl.remove_label(mr, OMM_PENDING)

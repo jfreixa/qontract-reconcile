@@ -98,8 +98,8 @@ class MrLabelStatus:
     """
 
     merge_priority: int | None
-    hold_labels: frozenset[str]
-    error_labels: frozenset[str]
+    hold_labels: tuple[str, ...]
+    error_labels: tuple[str, ...]
     is_self_serviceable: bool
     tenant_labels: frozenset[str]
 
@@ -125,8 +125,8 @@ def compute_mr_label_status(labels: Iterable[str]) -> MrLabelStatus:
     ]
     return MrLabelStatus(
         merge_priority=min(merge_priorities) if merge_priorities else None,
-        hold_labels=label_set & frozenset(HOLD_LABELS),
-        error_labels=label_set & ERROR_LABELS,
+        hold_labels=tuple(sorted(label_set & frozenset(HOLD_LABELS))),
+        error_labels=tuple(sorted(label_set & ERROR_LABELS)),
         is_self_serviceable=SELF_SERVICEABLE in label_set,
         tenant_labels=frozenset(
             label for label in label_set if label.startswith(TENANT_LABEL_PREFIX)

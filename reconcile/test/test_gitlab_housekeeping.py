@@ -2439,35 +2439,36 @@ def test_compute_mr_label_status(
 @pytest.mark.parametrize(
     ("labels", "expected_hold_labels", "expected_error_labels"),
     [
-        ([], frozenset(), frozenset()),
-        (["lgtm"], frozenset(), frozenset()),
-        (["bot/hold"], frozenset({"bot/hold"}), frozenset()),
+        ([], (), ()),
+        (["lgtm"], (), ()),
+        (["bot/hold"], ("bot/hold",), ()),
         (
-            ["bot/hold", "needs-rebase"],
-            frozenset({"bot/hold", "needs-rebase"}),
-            frozenset(),
+            ["needs-rebase", "bot/hold"],
+            ("bot/hold", "needs-rebase"),
+            (),
         ),
-        (["merge-error"], frozenset(), frozenset({"merge-error"})),
+        (["merge-error"], (), ("merge-error",)),
         (
-            ["pipeline-error", "rebase-error"],
-            frozenset(),
-            frozenset({"pipeline-error", "rebase-error"}),
+            ["rebase-error", "pipeline-error"],
+            (),
+            ("pipeline-error", "rebase-error"),
         ),
         (
             ["bot/hold", "merge-error"],
-            frozenset({"bot/hold"}),
-            frozenset({"merge-error"}),
+            ("bot/hold",),
+            ("merge-error",),
         ),
     ],
 )
 def test_compute_mr_label_status_exposes_matched_labels(
     labels: list[str],
-    expected_hold_labels: frozenset[str],
-    expected_error_labels: frozenset[str],
+    expected_hold_labels: tuple[str, ...],
+    expected_error_labels: tuple[str, ...],
 ) -> None:
     """Consumers that need to report *which* label caused a hold/error
-    (e.g. OMM's eject logging) read these directly instead of
-    re-intersecting ERROR_LABELS/HOLD_LABELS against mr.labels themselves."""
+    (e.g. OMM's eject logging) read these directly, already sorted, instead
+    of re-intersecting ERROR_LABELS/HOLD_LABELS against mr.labels and
+    sorting themselves."""
     status = compute_mr_label_status(labels)
     assert status.hold_labels == expected_hold_labels
     assert status.error_labels == expected_error_labels
