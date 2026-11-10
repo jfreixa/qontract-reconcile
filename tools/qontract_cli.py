@@ -2328,9 +2328,8 @@ def app_interface_merge_queue(ctx: click.Context) -> None:
 @click.pass_context
 def app_interface_review_queue(ctx: click.Context) -> None:
     from reconcile.gitlab_housekeeping.labels import (
-        ERROR_LABELS,
         HOLD_LABELS,
-        is_good_to_merge,
+        compute_mr_label_status,
     )
 
     vault_settings = get_app_interface_vault_settings()
@@ -2369,8 +2368,9 @@ def app_interface_review_queue(ctx: click.Context) -> None:
                 continue
 
             labels = mr.attributes.get("labels") or []
-            good_to_merge = is_good_to_merge(labels)
-            has_error_label = any(l in ERROR_LABELS for l in labels)
+            status = compute_mr_label_status(labels)
+            good_to_merge = status.is_good_to_merge
+            has_error_label = status.has_error
             if good_to_merge and not has_error_label:
                 continue
             if "stale" in labels:
