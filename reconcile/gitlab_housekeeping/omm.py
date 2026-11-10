@@ -22,9 +22,8 @@ from reconcile.gitlab_housekeeping.helpers import (
     time_to_merge,
 )
 from reconcile.gitlab_housekeeping.labels import (
-    ERROR_LABELS,
-    HOLD_LABELS,
     MERGE_LABELS_PRIORITY,
+    compute_mr_label_status,
     get_tenant_labels,
     has_overlapping_labels,
     is_eligible_for_optimistic_merge,
@@ -738,14 +737,14 @@ def _process_omm_member(
     pipeline_timeout: int | None,
 ) -> _MemberResult:
     """Process a single OMM pending member. Returns merge/active state."""
-    error_labels = ERROR_LABELS.intersection(mr.labels)
-    if error_labels:
+    status = compute_mr_label_status(mr.labels)
+    if status.error_labels:
         logging.info([
             "omm-group",
             "eject-error-label",
             gl.project.name,
             mr.iid,
-            sorted(error_labels),
+            sorted(status.error_labels),
         ])
         if not dry_run:
             gl.remove_label(mr, OMM_PENDING)
@@ -755,14 +754,13 @@ def _process_omm_member(
         ).inc()
         return _MemberResult()
 
-    hold_labels = set(HOLD_LABELS).intersection(mr.labels)
-    if hold_labels:
+    if status.hold_labels:
         logging.info([
             "omm-group",
             "eject-hold-label",
             gl.project.name,
             mr.iid,
-            sorted(hold_labels),
+            sorted(status.hold_labels),
         ])
         if not dry_run:
             gl.remove_label(mr, OMM_PENDING)
